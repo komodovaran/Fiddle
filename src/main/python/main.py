@@ -312,7 +312,6 @@ class MainWindow(QMainWindow):
             null_fret_value=-1,
             min_state_diff=0.2,
             acceptable_noise=0.25,
-            add_gamma_noise=False,
             progressbar_callback=progressbar,
             callback_every=update_freq,
         )
@@ -352,7 +351,7 @@ class MainWindow(QMainWindow):
                 plt.Subplot(self.canvas.fig, inner_subplot[n]) for n in range(5)
             ]
             ax_g_r, ax_red, ax_frt, ax_sto, ax_lbl = axes
-            bleach = trace["fb"].values[0]
+            bleach = trace["_bleaches_at"].values[0]
             tmax = trace["frame"].max()
             fret_states = np.unique(trace["E_true"])
             fret_states = fret_states[fret_states != -1]

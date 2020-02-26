@@ -11,29 +11,29 @@ import lib.utils
 
 def generate_traces(
     n_traces,
-    state_means = "random",
-    random_k_states_max = 5,
-    min_state_diff = 0.1,
-    D_lifetime = 400,
-    A_lifetime = 200,
-    blink_prob = 0.05,
-    bleed_through = 0,
-    aa_mismatch = (-0.3, 0.3),
-    trace_length = 200,
-    trans_prob = 0.1,
-    noise = 0.08,
-    trans_mat = None,
-    au_scaling_factor = 1,
-    aggregation_prob = 0.1,
-    max_aggregate_size = 100,
-    null_fret_value = -1,
-    acceptable_noise = 0.25,
-    scramble_prob = 0.3,
-    add_gamma_noise = True,
-    merge_labels = False,
-    discard_unbleached = False,
-    progressbar_callback = None,
-    callback_every = 1,
+    state_means="random",
+    random_k_states_max=5,
+    min_state_diff=0.1,
+    D_lifetime=400,
+    A_lifetime=200,
+    blink_prob=0.05,
+    bleed_through=0,
+    aa_mismatch=(-0.3, 0.3),
+    trace_length=200,
+    trans_prob=0.1,
+    noise=0.08,
+    trans_mat=None,
+    au_scaling_factor=1,
+    aggregation_prob=0.1,
+    max_aggregate_size=100,
+    null_fret_value=-1,
+    acceptable_noise=0.25,
+    scramble_prob=0.3,
+    gamma_noise_prob=0.5,
+    merge_labels=False,
+    discard_unbleached=False,
+    progressbar_callback=None,
+    callback_every=1,
 ):
     """
     Parameters
@@ -93,9 +93,9 @@ def generate_traces(
     scramble_prob:
         Probability that the trace will end up being scrambled. This stacks with
         aggregation.
-    add_gamma_noise:
-        Multiply centered Gamma(1, 0.11) to each frame's noise, to make the data
-        appear less synthetic
+    gamma_noise_prob:
+        Probability to multiply centered Gamma(1, 0.11) to each frame's noise,
+        to make the data appear less synthetic
     merge_labels:
         Merges (dynamic, static) and (aggregate, noisy, scrambled) to deal with
         binary labels only
@@ -154,7 +154,7 @@ def generate_traces(
                 # random_k_states_max of these)
                 k_states = rand_k_states
                 state_means = np.random.choice(
-                    state_means, size = k_states, replace = False
+                    state_means, size=k_states, replace=False
                 )
 
         if type(state_means) == float:
@@ -176,12 +176,12 @@ def generate_traces(
             # Make sure that each row/column sums to exactly 1
             if trans_prob != 0:
                 stay_prob = 1 - trans_prob
-                remaining_prob = 1 - trans_mat.sum(axis = 0)
+                remaining_prob = 1 - trans_mat.sum(axis=0)
                 trans_mat[trans_mat == stay_prob] += remaining_prob
 
         # Generate HMM model
         model = pg.HiddenMarkovModel.from_matrix(
-            trans_mat, distributions = dists, starts = starts
+            trans_mat, distributions=dists, starts=starts
         )
         model.bake()
 
@@ -251,12 +251,28 @@ def generate_traces(
 
     def generate_single_trace(*args):
         """Function to generate a single trace"""
-        nonlocal cls
-        nonlocal scramble_prob
+        (
+            i,
+            trans_prob,
+            au_scaling_factor,
+            noise,
+            bleed_through,
+            aa_mismatch,
+            scramble_prob,
+        ) = [np.array(arg) for arg in args]
 
-        trans_prob, au_scaling_factor, noise, bleed_through, aa_mismatch, i = [
-            np.array(arg) for arg in args
-        ]
+        # Simple table to keep track of labels
+        cls = {
+            "bleached": 0,
+            "aggregate": 1,
+            "noisy": 2,
+            "scramble": 3,
+            "1-state": 4,
+            "2-state": 5,
+            "3-state": 6,
+            "4-state": 7,
+            "5-state": 8,
+        }
 
         name = [i.tolist()] * trace_length
         frames = np.arange(1, trace_length + 1, 1)
@@ -264,10 +280,10 @@ def generate_traces(
         if np.random.uniform(0, 1) < aggregation_prob:
             is_aggregated = True
             E_true = generate_fret_states(
-                kind = "aggregate",
-                trans_mat = trans_mat,
-                trans_prob = 0,
-                state_means = state_means,
+                kind="aggregate",
+                trans_mat=trans_mat,
+                trans_prob=0,
+                state_means=state_means,
             )
             if max_aggregate_size >= 2:
                 aggregate_size = np.random.randint(2, max_aggregate_size + 1)
@@ -282,10 +298,10 @@ def generate_traces(
             n_pairs = 1
             trans_prob = np.random.uniform(trans_prob.min(), trans_prob.max())
             E_true = generate_fret_states(
-                kind = state_means,
-                trans_mat = trans_mat,
-                trans_prob = trans_prob,
-                state_means = state_means,
+                kind=state_means,
+                trans_mat=trans_mat,
+                trans_prob=trans_prob,
+                state_means=state_means,
             )
 
         DD_total, DA_total, AA_total = [], [], []
@@ -331,7 +347,7 @@ def generate_traces(
                         # Sudden spike for small aggregates to mimic
                         # observations
                         spike_len = np.min((np.random.randint(2, 10), bleach_D))
-                        DD[bleach_A: bleach_A + spike_len] = 2
+                        DD[bleach_A : bleach_A + spike_len] = 2
 
             # No matter what, zero each signal after its own bleaching
             if bleach_D is not None:
@@ -345,8 +361,7 @@ def generate_traces(
             DA_total.append(DA)
             AA_total.append(AA)
 
-        DD, DA, AA = [np.sum(x, axis = 0) for x in
-                      (DD_total, DA_total, AA_total)]
+        DD, DA, AA = [np.sum(x, axis=0) for x in (DD_total, DA_total, AA_total)]
 
         # Initialize -1 label for whole trace
         label = np.zeros(trace_length)
@@ -383,11 +398,11 @@ def generate_traces(
 
                 # Blink either donor or acceptor
                 if np.random.uniform(0, 1) < 0.5:
-                    DD[blink_start: (blink_start + blink_time)] = 0
-                    DA[blink_start: (blink_start + blink_time)] = 0
+                    DD[blink_start : (blink_start + blink_time)] = 0
+                    DA[blink_start : (blink_start + blink_time)] = 0
                 else:
-                    DA[blink_start: (blink_start + blink_time)] = 0
-                    AA[blink_start: (blink_start + blink_time)] = 0
+                    DA[blink_start : (blink_start + blink_time)] = 0
+                    AA[blink_start : (blink_start + blink_time)] = 0
 
         if first_bleach_all is not None:
             label[first_bleach_all:] = cls["bleached"]
@@ -407,7 +422,7 @@ def generate_traces(
         is_scrambled = False
         if np.random.uniform(0, 1) < scramble_prob and n_pairs <= 2:
             DD, DA, AA, label = scramble(
-                DD = DD, DA = DA, AA = AA, cls = cls, label = label
+                DD=DD, DA=DA, AA=AA, cls=cls, label=label
             )
             is_scrambled = True
 
@@ -433,7 +448,7 @@ def generate_traces(
         x = [s + np.random.normal(0, noise, len(s)) for s in (DD, DA, AA)]
 
         # Add centered gamma noise
-        if add_gamma_noise:
+        if np.random.uniform(0, 1) < gamma_noise_prob:
             for signal in x:
                 gnoise = np.random.gamma(1, noise * 1.1, len(signal))
                 signal += gnoise
@@ -462,7 +477,7 @@ def generate_traces(
         is_noisy = False
         for state in observed_states:
             noise_level = np.std(E_unbleached[E_unbleached_true == state])
-            if noise_level> acceptable_noise:
+            if noise_level > acceptable_noise:
                 label[label != cls["bleached"]] = cls["noisy"]
                 is_noisy = True
 
@@ -471,7 +486,9 @@ def generate_traces(
             for i in range(5):
                 k_states = i + 1
                 if len(observed_states) == k_states:
-                    label[label != cls["bleached"]] = cls["{}-state".format(k_states)]
+                    label[label != cls["bleached"]] = cls[
+                        "{}-state".format(k_states)
+                    ]
 
         # Bad traces don't contain FRET
         if any((is_noisy, is_aggregated, is_scrambled)):
@@ -486,48 +503,46 @@ def generate_traces(
             if label[-1] != cls["bleached"]:
                 return pd.DataFrame()
 
+        # Calculate difference between states if >=2 states and actual smFRET
+        if label[0] in [5, 6, 7, 8]:
+            min_diff = np.min(np.diff(state_means))
+        else:
+            min_diff = np.nan
+
+        # Columns pre-fixed with underscore contain metadata, and only the
+        # first value should be used (repeated because table structure)
         trace = pd.DataFrame(
             {
-                "DD"    : DD,
-                "DA"    : DA,
-                "AA"    : AA,
-                "E"     : E_obs,
+                "DD": DD,
+                "DA": DA,
+                "AA": AA,
+                "E": E_obs,
                 "E_true": E_true,
-                "S"     : S_obs,
-                "frame" : frames,
-                "name"  : name,
-                "fb"    : [first_bleach_all] * trace_length,
-                "label" : label,
+                "S": S_obs,
+                "frame": frames,
+                "name": name,
+                "label": label,
+                "_bleaches_at": np.array(first_bleach_all).repeat(trace_length),
+                "_noise_level": np.array(noise).repeat(trace_length),
+                "_min_state_diff": np.array(min_diff).repeat(trace_length),
             }
         )
-        trace.replace([np.inf, -np.inf], np.nan, inplace = True)
-        trace.fillna(method = "pad", inplace = True)
+        trace.replace([np.inf, -np.inf], np.nan, inplace=True)
+        trace.fillna(method="pad", inplace=True)
         return trace
-
-    # Simple table to keep track of labels
-    cls = {
-        "bleached" : 0,
-        "aggregate": 1,
-        "noisy"    : 2,
-        "scramble" : 3,
-        "1-state"  : 4,
-        "2-state"  : 5,
-        "3-state"  : 6,
-        "4-state"  : 7,
-        "5-state"  : 8,
-    }
 
     processes = tqdm(range(n_traces))
     traces = []
     for i in processes:
         traces.append(
             generate_single_trace(
+                i,
                 trans_prob,
                 au_scaling_factor,
                 noise,
                 bleed_through,
                 aa_mismatch,
-                i,
+                scramble_prob,
             )
         )
         if progressbar_callback is not None:
@@ -569,8 +584,8 @@ def sim_to_ascii(df, trace_len, outdir):
                 "D-Dexc-rw": trace["DD"],
                 "A-Dexc-rw": trace["DA"],
                 "A-Aexc-rw": trace["AA"],
-                "S"        : trace["S"],
-                "E"        : trace["E"],
+                "S": trace["S"],
+                "E": trace["E"],
             }
         ).round(4)
 
@@ -592,18 +607,18 @@ def sim_to_ascii(df, trace_len, outdir):
                     mov_txt,
                     id_txt,
                     bl_txt,
-                    df.to_csv(index = False, sep = "\t"),
+                    df.to_csv(index=False, sep="\t"),
                 )
             )
     y = pd.Series(y)
-    y = labels_to_binary(y, one_hot = False, to_ones = (2, 3))
-    y.to_csv(os.path.join(outdir, "y.txt"), sep = "\t")
+    y = labels_to_binary(y, one_hot=False, to_ones=(2, 3))
+    y.to_csv(os.path.join(outdir, "y.txt"), sep="\t")
 
 
 def labels_to_binary(y, one_hot, to_ones):
     """Converts group labels to binary labels, given desired targets"""
     if one_hot:
-        y = y.argmax(axis = 2)
+        y = y.argmax(axis=2)
     y[~np.isin(y, to_ones)] = -1
     y[y != -1] = 1
     y[y != 1] = 0
