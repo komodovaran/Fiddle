@@ -1,1 +1,1 @@
-Latest code has been integrated in DeepFRET. This repo is no longer maintained.
+Functionality has been merged into https://github.com/hatzakislab/DeepFRET-GUI 👋
